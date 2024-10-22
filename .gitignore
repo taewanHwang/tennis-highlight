@@ -1,0 +1,9 @@
+api_venv/*
+__pycache__/*
+app/__pycache__/*
+app/processed_videos/*
+app/temp/*
+app/users.txt
+*.log
+model/*
+
