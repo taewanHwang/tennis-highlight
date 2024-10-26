@@ -295,8 +295,7 @@ def extract_playing_segments_from_video(predictions, video_file_path, highlight_
         print(f"Highlight videos created: {highlight_videos}")
     return highlight_videos
     
-
-def extract_playing_from_video(video_file_path, full_video_path_1, full_comp_video_path_1, playing_video_path_2, playing_comp_video_path_2, predictions, original_fps, threshold=config.PLAY_THRESHOLD, make_full=False, make_playing=True):    
+def extract_playing_from_video(video_file_path, full_video_path_1, full_comp_video_path_1, playing_video_path_2, playing_comp_video_path_2, predictions, original_fps, make_full, make_playing, threshold=config.PLAY_THRESHOLD):    
     cap = cv2.VideoCapture(video_file_path)
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -317,7 +316,7 @@ def extract_playing_from_video(video_file_path, full_video_path_1, full_comp_vid
     for idx, (time_index, pred_label, playing_prob, not_playing_prob) in enumerate(predictions):
         start_frame = previous_end_frame
         end_frame = int(time_index * original_fps)
-        print(f"start_frame:{start_frame}, end_frame:{end_frame}, time_index:{time_index}")
+        print(f"start_frame:{start_frame}, end_frame:{end_frame}, time_index:{time_index}, playing_prob:{playing_prob}")
         
         cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
 
@@ -330,9 +329,11 @@ def extract_playing_from_video(video_file_path, full_video_path_1, full_comp_vid
 
             frame_with_text = add_prediction_text_to_frame(frame, playing_prob, not_playing_prob, start_frame / original_fps, end_frame / original_fps)
             if make_full:
+                # print(f"make_full:{make_full} then write frame")
                 out_all.write(frame_with_text)  # 비디오1에 전체 프레임 저장
             
             if (playing_prob > threshold) and (make_playing == True):
+                # print(f"playing_prob:{playing_prob} and make_playing:{make_playing} then write frame")
                 playing_out.write(frame)  # 비디오2에 해당 프레임 저장
         
         # 다음 구간을 위한 end_frame 업데이트
@@ -343,7 +344,7 @@ def extract_playing_from_video(video_file_path, full_video_path_1, full_comp_vid
     playing_out.release()
 
     print(f"Full video with text saved at: {full_video_path_1}")
-    print(f"Playing segments video saved at: {playing_video_path_2}")
+    print(f"Playing full video saved at: {playing_video_path_2}")
 
     # 압축 작업 시간 측정
     compress_video_with_ffmpeg(full_video_path_1, full_comp_video_path_1)  # 전체 비디오 압축
@@ -518,9 +519,10 @@ def is_task_stopped(task_id):
     return r.get(f"stop_task_{task_id}") == b"true"
 
 
-def process_video(self, video_path, make_full=False, make_playing=False, make_highlights=True, make_segments=False):
+def process_video(self, video_path, make_full=True, make_playing=True, make_highlights=True, make_segments=True):
     video_filename = os.path.splitext(os.path.basename(video_path))[0]
     print(f"process_video 실행: video_path: {video_path}, video_filename:{video_filename}")
+    print(f"make configure\nmake_full:{make_full}, make_playing:{make_playing}, make_highlights:{make_highlights}, make_segments:{make_segments}")
 
     short_uuid = video_filename + str(uuid.uuid4())[:8]
     folder_path = os.path.join(config.PROCESSED_VIDEOS_FOLDER, short_uuid)
@@ -568,7 +570,7 @@ def process_video(self, video_path, make_full=False, make_playing=False, make_hi
     highlight_video_paths = extract_playing_segments_from_video(predictions, video_path, highlight_temp_video_path, highlight_video_path, folder_path, segment_zip_path, make_highlights, make_segments)
     print(f"result highlight video path:{highlight_video_paths}")
 
-    print(f"비디오 처리 완료: full_video_path={full_video_path}, playing_video_path={playing_video_path}, highlight_video_path={highlight_video_path}")
+    print(f"비디오 처리 완료: full_video_path={full_video_path}, playing_video_path={playing_video_path}, highlight_video_path={highlight_video_path}, segment_zip_path:{segment_zip_path}")
 
     return full_video_path, playing_video_path, highlight_video_paths, segment_zip_path
 

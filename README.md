@@ -44,6 +44,7 @@ To restart the service (FastAPI and Gradio), use the restart.sh script:
 ### 5. Etc
 User Authentication
 - User authentication is handled through a user list stored in a local file. You can manage users in the auth_users file. Only authenticated users can access the Gradio UI.
+
 Scripts
 - restart.sh: Restarts the backend (FastAPI) and Gradio services.
 - run.sh: Displays logs for monitoring the backend and Gradio services.

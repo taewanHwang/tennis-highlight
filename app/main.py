@@ -144,6 +144,7 @@ async def download_video(task_id: str, video_type: str = "full"):
             # ZIP 파일 생성
             with zipfile.ZipFile(highlight_zip_path, 'w') as zipf:
                 for highlight_video in highlight_video_paths:
+                    print(f"zip file of {highlight_video}")
                     zipf.write(highlight_video, os.path.basename(highlight_video))  # 각 하이라이트 비디오를 압축
             
             result_file = highlight_zip_path

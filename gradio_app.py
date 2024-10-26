@@ -79,26 +79,25 @@ def download_video(task_id, video_type):
         if response_download.status_code == 200:
             # Content-Disposition 헤더에서 파일명 추출
             content_disposition = response_download.headers.get('Content-Disposition')
-            if content_disposition:
-                # 파일명 추출 (Content-Disposition: attachment; filename="파일명")
-                filename = content_disposition.split('filename=')[-1].strip('\"')
-            else:
-                # 파일명을 헤더에서 찾지 못한 경우 기본 파일명 설정
-                filename = f"{task_id}_{video_type}.mp4"
+            print(f"content_disposition:{content_disposition}",flush=True)
+            filename = content_disposition.split('filename=')[-1].strip('\"')
+            print(f"filename:{filename}",flush=True)
 
             # 서버에서 전달된 파일명을 사용하여 파일 저장
-            video_file_path = os.path.join(os.getcwd(), filename)
-            with open(video_file_path, 'wb') as f:
+            file_path = os.path.join(os.getcwd(), filename)
+            print(f"file_path:{file_path}",flush=True)
+            with open(file_path, 'wb') as f:
                 for chunk in response_download.iter_content(chunk_size=1024):
                     if chunk:
                         f.write(chunk)
             
-            if os.path.exists(video_file_path):
-                return video_file_path
+            if os.path.exists(file_path):
+                print(f"file exist:{file_path}",flush=True)
+                return file_path
             else:
-                return "Error: Downloaded video file not found."
+                return "Error: Downloaded file not found."
         else:
-            return f"Failed to download video. Status code: {response_download.status_code}"
+            return f"Failed to download file. Status code: {response_download.status_code}"
     return "No task to download video from."
 
 # Gradio UI 구성
@@ -175,30 +174,35 @@ with gr.Blocks() as demo:
     # 다운로드 버튼으로 전체 비디오 다운로드
     def start_download_full(state):
         if state:
+            print("start_download_full",flush=True)
             return download_video(state, "full")  # 전체 비디오 다운로드
         return "No task to download."
 
     # 다운로드 버튼으로 플레이 중인 비디오 다운로드
     def start_download_playing(state):
         if state:
+            print("start_download_playing",flush=True)
             return download_video(state, "playing")  # 플레이 중인 비디오 다운로드
         return "No task to download."
 
     # 다운로드 버튼으로 하이라이트 중인 비디오 다운로드
     def start_download_highlight(state):
         if state:
+            print("start_download_highlight",flush=True)
             return download_video(state, "highlight")  # 하이트 비디오 다운로드
         return "No task to download."
 
     # 다운로드 버튼으로 하이라이트 복수 비디오 다운로드
     def start_download_highlights(state):
         if state:
+            print("start_download_highlights",flush=True)
             return download_video(state, "highlights")  # 하이트 비디오 다운로드
         return "No task to download."
 
     # 다운로드 버튼으로 세그먼트 비디오 다운로드
     def start_download_segments(state):
         if state:
+            print("start_download_segments",flush=True)
             return download_video(state, "segments")  # 하이트 비디오 다운로드
         return "No task to download."
 
@@ -222,5 +226,6 @@ with gr.Blocks() as demo:
 # 사용자 정보 파일에서 읽어와서 인증 정보로 설정
 auth_users = load_users()
 
+print("gradio app start",flush=True)
 # Gradio 웹 인터페이스 실행
 demo.launch(auth=auth_users, share=False, server_port=9000, server_name="0.0.0.0")
