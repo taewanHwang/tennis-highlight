@@ -48,12 +48,14 @@ User Authentication
 Scripts
 - restart.sh: Restarts the backend (FastAPI) and Gradio services.
 - run.sh: Displays logs for monitoring the backend and Gradio services.
+
 Endpoints
 - /process_video/: Upload and process a video file.
 - /process_youtube_video/: Process a YouTube video with a specified start and end time.
 - /check_status/{task_id}: Check the processing status of a task.
 - /download_video/{task_id}: Download the processed video.
 - /stop_task/{task_id}: Stop an ongoing video processing task.
+
 Task Flow
 - Select Input Method: Choose between File Upload or YouTube Link.
 - Start Processing: Either upload a video file or input a YouTube video link and specify the start and end times. Click "Start Processing" to begin.
