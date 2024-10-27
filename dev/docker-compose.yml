@@ -1,0 +1,40 @@
+version: '3'
+
+services:
+  practice3_container:
+    image: practice3_image
+    container_name: practice3_container
+    ports:
+      - "41090:9000"
+      - "41091:9001"
+    volumes:
+      - /home/disk5/taewan/study/practice2/demo3/dev/logs:/base/logs
+      - /home/disk5/taewan/study/practice2/demo3/dev/app/processed_videos:/base/app/processed_videos
+      - /home/disk5/taewan/study/practice2/demo3/dev/app/temp:/base/app/temp
+      - /home/disk5/taewan/study/practice2/demo3/dev/app/src:/base/app/src
+
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]  # GPU 접근 설정
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=14  # GPU 15번만 사용 
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - REDIS_URL=redis://redis3_container:6379/0
+
+    runtime: nvidia  # NVIDIA 런타임 사용
+    networks:
+      - practice3_network
+
+  redis3_container:
+    image: redis
+    container_name: redis3_container
+    # ports:
+    #   - "41083:6379"
+    networks:
+      - practice3_network
+
+networks:
+  practice3_network:
+    driver: bridge
