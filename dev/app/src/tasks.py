@@ -1,73 +1,104 @@
 from celery import shared_task
-from app.utils import process_video, download_youtube_video, set_stop_flag, is_task_stopped
-from datetime import datetime, timezone
+from utils import process_video, download_youtube_video
+import db_crud
 
-
-@shared_task(bind=True, name="app.tasks.process_youtube_video", track_started=True)
+@shared_task(bind=True, name="app.src.tasks.process_youtube_video", track_started=True)
 def process_youtube_video(self, input_data):
     """
     유튜브 비디오를 다운로드하고, 비디오 처리 및 저장.
     """
-    proc_start_time = datetime.now(timezone.utc)
-    self.update_state(state='STARTED', meta={'proc_start_time': proc_start_time})
+    try:
+        # 유튜브 링크와 시작/종료 시간 추출
+        youtube_url = input_data['youtube_url']
+        start_time = input_data['start_time']
+        end_time = input_data['end_time']
+        process_options = input_data['process_options']
+        username = input_data['username']
+        req_id = self.request.id  # req ID 가져오기
 
-    # 유튜브 링크와 시작/종료 시간 추출
-    youtube_url = input_data['youtube_url']
-    start_time = input_data['start_time']
-    end_time = input_data['end_time']
-    
-    print(f"process_youtube_video 실행: youtube_url: {youtube_url}, start_time: {start_time}, end_time: {end_time}")
+        print(f"process_youtube_video 실행: youtube_url: {youtube_url}, start_time: {start_time}, end_time: {end_time}, process_options:{process_options}, username:{username}, req_id: {req_id}")
+        
+        # 1. DB에 video task 생성
+        video_task = db_crud.create_video_task(username, req_id, youtube_url, process_options)
 
-    print(f'task_id:{self.request.id}, is_stoppped:{is_task_stopped(self.request.id)}')
-    if is_task_stopped(self.request.id):
-        self.update_state(state='REVOKED', meta={"info": "Task was stopped by user."})
-        return {"message": "Task was stopped by user"}
+        if db_crud.is_task_cancelled(video_task.id):
+            return {"message": "Task was stopped by user"}
 
-    # # 1. 유튜브 비디오 다운로드
-    video_path = download_youtube_video(youtube_url, start_time, end_time)
-    (full_video_path, playing_video_path, highlight_video_paths, segment_zip_path) = process_video(self, video_path)
+        # 2. 유튜브 비디오 다운로드
+        video_path = download_youtube_video(youtube_url, start_time, end_time, username)
+        
+        if db_crud.is_task_cancelled(video_task.id):
+            return {"message": "Task was stopped by user"}
+        db_crud.update_task_status_to_downloaded(video_task.id)
+            
+        # 3. 비디오 영상 처리
+        full_video_path, playing_video_path, highlight_zip_path, segment_zip_path = process_video(self, video_path, process_options, username)
+        
+        if db_crud.is_task_cancelled(video_task.id):
+            return {"message": "Task was stopped by user"}
+        
+        # 비디오 처리 결과를 VideoResult에 저장
+        if full_video_path:  # full_video_path가 None이 아닌 경우
+            db_crud.create_video_result(video_task.id, full_video_path, "full")
 
-    # 6. 결과 반환
-    return {
-        "message": "Video processing completed",
-        "full_video_path": full_video_path,
-        "playing_video_path": playing_video_path,
-        "highlight_video_paths": highlight_video_paths,
-        "segment_zip_path": segment_zip_path,
-        'proc_start_time': proc_start_time,
-        'proc_end_time': datetime.now(timezone.utc), 
-    }
+        if playing_video_path:  # playing_video_path가 None이 아닌 경우
+            db_crud.create_video_result(video_task.id, playing_video_path, "playing")
 
+        if highlight_zip_path:  # highlight_zip_path가 None이 아닌 경우
+            db_crud.create_video_result(video_task.id, highlight_zip_path, "highlights")
 
-@shared_task(bind=True, name="app.tasks.process_uploaded_video", track_started=True)
-def process_uploaded_video(self, video_path):
-    self.update_state(state='STARTED')  # 작업 시작 시 상태 업데이트
+        if segment_zip_path:  # segment_zip_path가 None이 아닌 경우
+            db_crud.create_video_result(video_task.id, segment_zip_path, "segments")
+
+        db_crud.update_task_status_to_complete(video_task.id)
+        
+    except Exception as e:
+        print(f"Error in process_youtube_video: {e}", flush=True)
+        
+        # 에러 발생 시 해당 작업의 상태를 "error"로 업데이트
+        if video_task:
+            db_crud.update_task_status_to_error(video_task.id)
+        
+        # 에러 메시지를 반환하거나 Celery에 기록
+        raise e 
+
+@shared_task(bind=True, name="app.src.tasks.process_uploaded_video", track_started=True)
+def process_uploaded_video(self, video_path, process_options, username):
     """
     업로드된 비디오 파일을 처리하고, 결과를 저장.
     """
-    proc_start_time = datetime.now(timezone.utc)
-    self.update_state(state='STARTED', meta={'proc_start_time': proc_start_time})
+    try:
+        req_id = self.request.id  # req ID 가져오기
+        print(f"process_uploaded_video 실행: video_path: {video_path}, process_options: {process_options}, username: {username}, req_id:{req_id}")
+        
+        # 1. DB에 video task 생성
+        video_task = db_crud.create_video_task(username, req_id, video_path, process_options)
 
-    (full_video_path, playing_video_path, highlight_video_paths, segment_zip_path) = process_video(self, video_path)
+        # 2. 비디오 영상 처리
+        full_video_path, playing_video_path, highlight_zip_path, segment_zip_path = process_video(self, video_path, process_options, username)
+        if db_crud.is_task_cancelled(video_task.id):
+            return {"message": "Task was stopped by user"}
+        
+        # 비디오 처리 결과를 VideoResult에 저장
+        if full_video_path:  # full_video_path가 None이 아닌 경우
+            db_crud.create_video_result(video_task.id, full_video_path, "full")
 
-    # 6. 결과 반환
-    return {
-        "message": "Video processing completed",
-        "full_video_path": full_video_path,
-        "playing_video_path": playing_video_path,
-        "highlight_video_paths": highlight_video_paths,
-        "segment_zip_path": segment_zip_path,
-        'proc_start_time': proc_start_time,
-        'proc_end_time': datetime.now(timezone.utc), 
-    }
-    
+        if playing_video_path:  # playing_video_path가 None이 아닌 경우
+            db_crud.create_video_result(video_task.id, playing_video_path, "playing")
 
-@shared_task(bind=True, name="app.tasks.sto_task", track_started=True)
-def stop_process(self, input_data):
-    """
-    유튜브 비디오를 다운로드하고, 비디오 처리 및 저장.
-    """
-    task_id = self.request.id
-    ### task id에 해당하는 redis 작업을 중지, 중지되었는지 확인하고 true, false 반환
-    set_stop_flag(task_id)
-    return {"status": "stopping", "task_id": task_id}
+        if highlight_zip_path:  # highlight_zip_path가 None이 아닌 경우
+            db_crud.create_video_result(video_task.id, highlight_zip_path, "highlights")
+
+        if segment_zip_path:  # segment_zip_path가 None이 아닌 경우
+            db_crud.create_video_result(video_task.id, segment_zip_path, "segments")
+
+        db_crud.update_task_status_to_complete(video_task.id)
+    except Exception as e:
+        print(f"Error in process_uploaded_video: {e}", flush=True)
+        
+        # 에러 발생 시 해당 작업의 상태를 "error"로 업데이트
+        if video_task:
+            db_crud.update_task_status_to_error(video_task.id)
+        
+        # 에러 메시지를 반환하거나 Celery에 기록
+        raise e 

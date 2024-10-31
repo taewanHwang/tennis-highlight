@@ -33,7 +33,7 @@ RUN distribution=$(. /etc/os-release;echo $ID$VERSION_ID) && \
     apt-get update && apt-get install -y nvidia-container-toolkit
 
 # 로그 디렉토리 생성
-RUN mkdir -p logs/celery logs/gradio logs/uvicorn app/src app/temp app/processed_videos app/plot
+RUN mkdir -p logs/celery logs/gradio logs/uvicorn app/src
 
 # 애플리케이션 파일 복사
 COPY ./run.sh /base/

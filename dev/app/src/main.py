@@ -1,15 +1,21 @@
-from fastapi import FastAPI, UploadFile, File, BackgroundTasks
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from typing import List
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+import os, sys
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from celery_app import celery_app
-from app.models import VideoProcessInput
-import uuid
 import logging
-import os
-from urllib.parse import quote
-from app.utils import set_stop_flag
-import zipfile
+from models import YouTubeVideoInput
+
 from datetime import datetime, timezone
+
+from db import engine
+import db_crud, db_models
+import config
+from utils import validate_youtube_video_input, validate_upload_video_input
+
+# db_models.Base.metadata.drop_all(bind=engine)  # 기존 테이블 삭제
+db_models.Base.metadata.create_all(bind=engine)  # 테이블 다시 생성
 
 app = FastAPI()
 
@@ -21,159 +27,126 @@ logging.basicConfig(
     format="[%(asctime)s: %(levelname)s] %(message)s",
 )
 
-# POST /process_youtube_video: 유튜브 링크 기반 비디오 처리
-@app.post("/process_youtube_video/")
-async def youtube_video(input_data: VideoProcessInput):
-    youtube_url = input_data.youtube_url
-    start_time = input_data.start_time
-    end_time = input_data.end_time
-    
-    # 받은 데이터를 출력 (추후 처리 로직 추가 가능)
-    print(f"Received YouTube URL: {youtube_url}")
-    print(f"Start Time: {start_time}")
-    print(f"End Time: {end_time}")
-    
-    # Celery 작업 호출 시, input_data를 그대로 전달
-    task = celery_app.send_task('app.tasks.process_youtube_video', args=[input_data.model_dump()])  # dict로 변환하여 전달
-    
-    # task ID 반환
-    return {"message": "Video processing started", "task_id": task.id}
+################################## Video processing function ##################################
 
-# POST /process_video: 비디오 파일 업로드 및 처리
-@app.post("/process_video/")
-async def upload_video(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
-    # 1. 고유 작업 ID 생성
-    print(f"upload video filename:{file.filename}")
+@app.post("/process_youtube_video/")
+async def process_youtube_video(input_data: YouTubeVideoInput):
+    # 1. 입력 검증
+    try:
+        validate_youtube_video_input(input_data)
+    except ValueError as e:
+        error_message = str(e)
+        print(f"Video processing input error: {error_message}")
+        return {"message": f"Video processing input error, {error_message}"}
+    
+    # 2. Celery 작업으로 파일 처리 요청
+    task = celery_app.send_task('app.src.tasks.process_youtube_video', args=[input_data.model_dump()])
+    
+    return {"message": "Video processing started", "task_id": task.id}
+    
+@app.post("/process_upload_video/")
+async def process_upload_video(file: UploadFile = File(...), process_options: List[str] = Form(...), username: str = Form(...)):
+    # 1. 입력 검증
+    try:
+        validate_upload_video_input(file, process_options, username)
+    except ValueError as e:
+        error_message = str(e)
+        print(f"Video processing input error: {error_message}")
+        return {"message": f"Video processing input error, {error_message}"}
+
     # 2. 파일을 서버에 저장
-    video_path = os.path.join("/base/app/temp", f"{file.filename}")
+    video_path = os.path.join(config.VIDEO_DATA_FOLDER, username, 'temp',f"{file.filename}")
     print(f"upload video video_path:{video_path}")
     with open(video_path, "wb") as f:
         f.write(await file.read())
     
     # 3. Celery 작업으로 파일 처리 요청
-    task = celery_app.send_task('app.tasks.process_uploaded_video', args=[video_path])
+    task = celery_app.send_task('app.src.tasks.process_uploaded_video', args=[video_path, process_options, username])
     
-    # 4. Celery 작업 ID 반환
     return {"message": "Video file uploaded and processing started", "task_id": task.id}
 
-# GET /check_status/{task_id}: 작업 상태 확인
-@app.get("/check_status/{task_id}")
-async def check_status(task_id: str):
-    task = celery_app.AsyncResult(task_id)
-    
-    print(f"check_status, task_id:{task_id}")
-    print(f"check_status state, state:{task.state}")
-    
-    # 상태에 따른 처리
-    if task.state == "PENDING":
-        # 작업이 대기 중인 경우
-        response = {"task_id": task_id, "status": "PENDING", "message": "The task is still pending."}
-    elif task.state == "STARTED":
-        proc_start_time = task.info.get('proc_start_time')
-        print(f"proc_start_time:{proc_start_time}")
-        if proc_start_time:
-            # 시작 시간과 현재 시간 차이 계산
-            elapsed_time = (datetime.now(timezone.utc) - proc_start_time).total_seconds()
-            response = {"task_id": task_id, "status": "STARTED", "elapsed_time": f"{int(elapsed_time)}초"}
-        else:
-            response = {"task_id": task_id, "status": "STARTED", "message": "The task is currently being processed."}
-    elif task.state == "SUCCESS":
-        # 작업이 성공적으로 완료된 경우
-        result = task.result  # 작업 결과 (process_video_task의 리턴값)
-        proc_start_time = result.get('proc_start_time')
-        proc_end_time = result.get('proc_end_time')
+################################## Task management function ##################################
 
-        if proc_start_time and proc_end_time:
-            # 시작 시간과 종료 시간 차이 계산
-            total_time = (proc_end_time - proc_start_time).total_seconds()
-            response = {
-                "task_id": task_id,
-                "status": "SUCCESS",
-                "message": "The task has been completed successfully.",
-                "total_time": f"{int(total_time)}초"
-            }
-        else:
-            response = {"task_id": task_id, "status": "SUCCESS", "message": "The task has been completed successfully."}
-    elif task.state == "FAILURE":
-        # 작업이 실패한 경우
-        response = {"task_id": task_id, "status": "FAILURE", "message": str(task.info)}
-    else:
-        # 그 외 상태 처리
-        response = {"task_id": task_id, "status": task.state, "message": "Unknown task state."}
+@app.get("/check_status/{req_id}")
+async def check_status(req_id: str):    
+    # 함수화한 세션 사용
+    task = db_crud.get_task_by_req_id(req_id)
     
+
+    if not task:
+        return {"error": "Task not found"}
+    
+    # 기본 응답 형식
+    response = {
+        "task_id": task.id,
+        "status": task.status
+    }
+
+    # elapsed_time 계산 함수
+    def calculate_elapsed_time(task):
+        now = datetime.now(timezone.utc)
+        elapsed_time = int((now - task.created_at.replace(tzinfo=timezone.utc)).total_seconds())
+        if elapsed_time < 60:
+            return f"{elapsed_time} sec"
+        else:
+            return f"{elapsed_time // 60} min"
+
+    # 상태에 따른 메시지 설정
+    if task.status in [config.TASK_STAT_DOWNLOADED, config.TASK_STAT_CREATED]:
+        response["message"] = f"The task is in process (total time {calculate_elapsed_time(task)})"
+    elif task.status == config.TASK_STAT_COMPLETED:
+        response["message"] = f"The task is in completed (total time {calculate_elapsed_time(task)})"
+    elif task.status == config.TASK_STAT_CANCELED:
+        response["message"] = "The task is canceled."
+    elif task.status == config.TASK_STAT_ERROR:
+        response["message"] = "The task has error."
+    else:
+        response["message"] = "Unknown task state."
+
     return response
 
-# GET /download_video/{task_id}: 작업 완료된 비디오 파일 다운로드
+
 @app.get("/download_video/{task_id}")
-async def download_video(task_id: str, video_type: str = "full"):
+async def download_video(task_id: int, video_type: str = "full"):
     """
     task_id로 비디오 처리 상태를 확인한 후, 성공한 경우 결과 비디오 파일을 제공하는 엔드포인트.
-    
-    Parameters:
-    - task_id: Celery 작업의 task_id
-    - video_type: "output_video_1" 또는 "output_video_2" (기본값: "output_video_1")
-    
-    """
-    
-    # Celery 작업 상태 확인
-    task = celery_app.AsyncResult(task_id)
-    
-    if task.state == "SUCCESS":
-        result = task.result  # 작업 결과
-        full_video_path = result.get("full_video_path")
-        playing_video_path = result.get("playing_video_path")
-        highlight_video_paths = result.get("highlight_video_paths")
-        segment_zip_path = result.get("segment_zip_path")
-        
-        print(f"full_video_path:{full_video_path}, playing_video_path:{playing_video_path}, highlight_video_paths:{highlight_video_paths}, segment_zip_path:{segment_zip_path}")
-        
-        # video_type에 따라 파일 경로 설정
-        if video_type == "full":
-            result_file = full_video_path
-            filename = 'download-full.mp4'
-        elif video_type == "playing":
-            result_file = playing_video_path
-            filename = 'download-playing.mp4'
-        elif video_type == "highlight":
-            result_file = highlight_video_paths[0]
-            filename = 'download-highlight.mp4'
-        elif video_type == "highlights":
-            base_path = os.path.dirname(highlight_video_paths[0])
-            highlight_zip_path = os.path.join(base_path, "highlight_videos.zip")
-            
-            # ZIP 파일 생성
-            with zipfile.ZipFile(highlight_zip_path, 'w') as zipf:
-                for highlight_video in highlight_video_paths:
-                    print(f"zip file of {highlight_video}")
-                    zipf.write(highlight_video, os.path.basename(highlight_video))  # 각 하이라이트 비디오를 압축
-            
-            result_file = highlight_zip_path
-            filename = 'download-highlights.zip'
-        elif video_type == "segments":
-            result_file = segment_zip_path
-            filename = 'download-segment.zip'
-            
-        print(f"result_file:{result_file}, filename:{filename}")
-        
-        # 해당 비디오 파일이 존재하는지 확인
-        if not os.path.exists(result_file):
-            return {"error": "Result file not found."}
-        
-        # 비디오 파일 반환
-        return FileResponse(
-            result_file, 
-            filename=filename
-        )
-    
-    elif task.state == "PENDING":
-        return {"error": "The task is still pending or processing has not started yet."}
-    elif task.state == "FAILURE":
-        return {"error": "The task has failed."}
-    else:
-        return {"error": "The task is not completed yet."}
 
-@app.post("/stop_task/{task_id}")
-async def stop_task(task_id: str):
-    """특정 task_id 작업 중지 요청"""
-    set_stop_flag(task_id)
-    return {"message": f"Task {task_id} has been requested to stop."}
+    Parameters:
+    - task_id: 작업의 task_id
+    - video_type: "full", "playing", "highlight", "highlights", "segments" 등
+    """
+    print(f"task_id: {task_id}, video_type: {video_type}", flush=True)
+
+    # DB에서 작업 조회
+    video_task = db_crud.get_video_task_by_id(task_id)
+    print(f"video_task: {video_task}", flush=True)
+    print(f"video_task.status: {video_task.status}", flush=True)
+
+    # 상태 확인
+    if video_task.status != config.TASK_STAT_COMPLETED:
+        raise HTTPException(status_code=400, detail=f"Task is not completed. Current status: {video_task.status}")
+
+    # VideoResult에서 해당 task_id와 video_type을 사용해 결과 파일 경로 조회
+    result_file = db_crud.get_video_result_by_task_id_and_type(video_task.id, video_type)
+    
+    if not result_file or not os.path.exists(result_file):
+        raise HTTPException(status_code=404, detail="Result file not found.")
+    
+    print(f"result_file: {result_file}", flush=True)
+
+    # 파일 이름 설정: 'segments'와 'highlights'는 ZIP, 그 외는 MP4
+    if video_type in ['segments', 'highlights']:
+        filename = f"download-{video_type}.zip"
+    else:
+        filename = f"download-{video_type}.mp4"
+
+    # 비디오 파일 반환
+    return FileResponse(result_file, filename=filename)
+
+
+@app.post("/stop_task/{req_id}")
+async def stop_task(req_id: str):
+    """특정 req_id 작업 중지"""
+    result = db_crud.cancel_video_task(req_id)
+    print(f"stop_task result: {result}, req_id:{req_id}")
+    return result

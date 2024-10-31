@@ -11,7 +11,6 @@ services:
       - /home/disk5/taewan/study/practice2/demo3/logs:/base/logs
       - /home/disk5/taewan/study/practice2/demo3/app/processed_videos:/base/app/processed_videos
       - /home/disk5/taewan/study/practice2/demo3/app/temp:/base/app/temp
-
     deploy:
       resources:
         reservations:

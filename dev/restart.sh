@@ -43,8 +43,9 @@ if [ "$answer" == "y" ]; then
     if [ "$BUILD_MODE" == true ]; then
         # 빌드 모드 (캐시 없이 빌드 후 전체 재시작)
         docker-compose down
-        docker build --no-cache -t practice3_image .
+        docker build -t practice3_image .
         docker-compose up --build -d
+        docker image prune -f
     else
         if [ "$RESTART_MODE" == "all" ]; then
             # 전체 재시작 (빌드 없이)
@@ -59,3 +60,5 @@ if [ "$answer" == "y" ]; then
 else
     echo "실행이 취소되었습니다."
 fi
+
+

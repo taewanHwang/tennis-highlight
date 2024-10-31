@@ -4,16 +4,13 @@ __pycache__/*
 *.log
 
 dev/app/__pycache__/*
-dev/app/processed_videos/*
-dev/app/temp/*
 dev/app/users.txt
 dev/model/*
+dev/data
 
 
 
 prod/app/__pycache__/*
-prod/app/processed_videos/*
-prod/app/temp/*
 prod/app/users.txt
 prod/model/*
-
+prod/data
