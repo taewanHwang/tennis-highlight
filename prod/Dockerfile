@@ -33,18 +33,14 @@ RUN distribution=$(. /etc/os-release;echo $ID$VERSION_ID) && \
     apt-get update && apt-get install -y nvidia-container-toolkit
 
 # 로그 디렉토리 생성
-RUN mkdir -p logs/celery logs/gradio logs/uvicorn app/temp app/processed_videos app/plot
+RUN mkdir -p logs/celery logs/gradio logs/uvicorn app/src
 
 # 애플리케이션 파일 복사
-COPY ./app /base/app
-COPY ./celery_app.py /base/
-COPY ./logs /base/logs
-COPY ./gradio_app.py /base/
 COPY ./run.sh /base/
 COPY ./model /base/model
 
 # 포트 설정
-EXPOSE 9001 9000 41080 41081 41082 6379 41083
+EXPOSE 41080 41081 41082 41083
 
 # 쉘 스크립트를 실행하도록 설정 (Celery와 Uvicorn을 백그라운드에서 실행)
 ENTRYPOINT ["bash", "run.sh"]

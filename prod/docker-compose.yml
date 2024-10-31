@@ -1,16 +1,17 @@
 version: '3'
 
 services:
-  practice2_container:
+  practice3_container:
     image: practice2_image
     container_name: practice2_container
     ports:
       - "41080:9000"
       - "41081:9001"
     volumes:
-      - /home/disk5/taewan/study/practice2/demo3/logs:/base/logs
-      - /home/disk5/taewan/study/practice2/demo3/app/processed_videos:/base/app/processed_videos
-      - /home/disk5/taewan/study/practice2/demo3/app/temp:/base/app/temp
+      - /home/disk5/taewan/study/practice2/demo3/prod/logs:/base/logs
+      - /home/disk5/taewan/study/practice2/demo3/prod/data/video_data:/base/data/video_data
+      - /home/disk5/taewan/study/practice2/demo3/prod/app/src:/base/app/src
+
     deploy:
       resources:
         reservations:
@@ -19,17 +20,32 @@ services:
     environment:
       - NVIDIA_VISIBLE_DEVICES=15  # GPU 15번만 사용 
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
-      - REDIS_URL=redis://redis_container:6379/0
+      - REDIS_URL=redis://redis2_container:6379/0
+      - PYTHONPATH=$PYTHONPATH:/base/app:/base/app/src
+
 
     runtime: nvidia  # NVIDIA 런타임 사용
     networks:
       - practice2_network
 
-  redis_container:
+  redis3_container:
     image: redis
-    container_name: redis_container
+    container_name: redis2_container
     ports:
       - "41083:6379"
+    networks:
+      - practice2_network
+
+  mysql2_container:
+    image: mysql:latest
+    container_name: mysql2_container
+    environment:
+      - MYSQL_ROOT_PASSWORD=password
+      - MYSQL_DATABASE=mydb
+    ports:
+      - "3307:3306"
+    volumes:
+      - /home/disk5/taewan/study/practice2/demo3/prod/data/mysql_data:/var/lib/mysql
     networks:
       - practice2_network
 
