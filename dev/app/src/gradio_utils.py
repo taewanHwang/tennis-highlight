@@ -153,6 +153,16 @@ def on_row_select(task_state, evt: gr.SelectData):
         button_state = gr.update(interactive=False)
     return tl, td, nt, button_state, button_state, button_state, button_state, task_state
 
+
+def init_tasks_func(request: gr.Request):
+    auth_state, task_table = update_tasks_func(request)
+    username = auth_state.get("username", "Guest")
+    user_info_message = (
+        f"### 환영합니다. {username}!\n"
+        f"작업 목록을 새로고침하려면 **'Update Tasks'** 버튼을, 새 작업을 시작하려면 **'New Task'** 버튼을 눌러주세요."
+    )
+    return auth_state, task_table, user_info_message
+
 def update_tasks_func(request: gr.Request):
     auth_state = auth_state = {"username": request.username} 
     task_table = db_crud.get_user_tasks(auth_state)

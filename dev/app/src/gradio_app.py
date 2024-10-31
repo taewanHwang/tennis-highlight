@@ -1,17 +1,18 @@
 import gradio as gr
-from gradio_utils import auth, show_task_list, update_tasks_func, show_new_task, update_tasks_func, on_row_select, start_download_full, start_download_playing, start_download_highlights, start_download_segments, update_ui, start_processing, stop_processing, refresh_status
+from gradio_utils import auth, show_task_list, init_tasks_func, init_tasks_func, update_tasks_func, show_new_task, update_tasks_func, on_row_select, start_download_full, start_download_playing, start_download_highlights, start_download_segments, update_ui, start_processing, stop_processing, refresh_status
 import config
 
 ##################################### Main #####################################
 
 # Main app view to toggle between task list and task detail
-with gr.Blocks() as main_view:
+with gr.Blocks(title="Tennis highlight editor") as main_view:
     task_list_container = gr.Group(visible=True)
     task_detail_container = gr.Group(visible=False) 
     new_task_container = gr.Group(visible=False) 
     
     auth_state = gr.State({"username": None})
     task_state = gr.State({"created_task_id": None, "detail_task_id":None})    
+
 
     with task_detail_container:
         back_button = gr.Button("◀ Back")
@@ -30,11 +31,14 @@ with gr.Blocks() as main_view:
         download_segments_button.click(start_download_segments, inputs=task_state, outputs=download_output)
 
     with task_list_container:
+        welcome_markdown = gr.Markdown()  # 사용자 이름을 표시할 마크다운 컴포넌트
+
         new_tasks_button = gr.Button("✅ New Task")
         update_tasks_button = gr.Button("🔄 Update Tasks")
         task_table = gr.DataFrame(headers=["Task ID", "Status", "Video URL", "Created", "Updated","Task Types"])  # 테이블 컴포넌트
 
-        main_view.load(update_tasks_func, inputs=None, outputs=[auth_state, task_table])
+
+        main_view.load(init_tasks_func, inputs=None, outputs=[auth_state, task_table, welcome_markdown])
         new_tasks_button.click(show_new_task, inputs=[], outputs=[task_list_container, task_detail_container, new_task_container])
         update_tasks_button.click(update_tasks_func, inputs=[], outputs=[auth_state, task_table])
 
