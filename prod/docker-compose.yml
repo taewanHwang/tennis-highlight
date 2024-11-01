@@ -1,7 +1,7 @@
 version: '3'
 
 services:
-  practice3_container:
+  practice2_container:
     image: practice2_image
     container_name: practice2_container
     ports:
