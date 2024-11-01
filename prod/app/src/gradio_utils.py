@@ -147,7 +147,7 @@ def on_row_select(task_state, evt: gr.SelectData):
         button_state = gr.update(interactive=True)
     else:
         gr.Warning("Select completed task")
-        task_state["detail_task_id"] = task_id
+        task_state["detail_task_id"] = None
         tl, td, nt = show_task_list()     
            
         button_state = gr.update(interactive=False)

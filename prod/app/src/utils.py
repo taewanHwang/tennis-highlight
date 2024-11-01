@@ -1,6 +1,5 @@
 import torch
 from transformers import VideoMAEForVideoClassification, VideoMAEImageProcessor
-from torchvision.io import read_video
 import yt_dlp
 import os
 import re
@@ -11,13 +10,13 @@ import uuid
 import config as config
 import cv2
 import numpy as np
-import matplotlib.pyplot as plt
 import subprocess
-import time
 import zipfile
 from datetime import datetime, timezone, timedelta
 import re
 from urllib.parse import urlparse
+from pydub import AudioSegment
+import ffmpeg
 
 # UTC 시간을 KST로 변환하는 함수
 def convert_to_kst(utc_datetime):
@@ -94,6 +93,19 @@ def format_filename(title, max_length=50):
     # 길이가 50자를 넘으면 자르기
     return title[:max_length]
 
+class loggerOutputs:
+    def error(msg):
+        print(f"[Error] {msg}",flush=True)
+    def warning(msg):
+        print(f"[Warning] {msg}",flush=True)
+    def debug(msg):
+        pass
+
+import os
+from datetime import datetime
+import yt_dlp
+import subprocess
+
 def download_youtube_video(youtube_link, start_time, end_time, username):
     current_time = datetime.now().strftime('%Y%m%d_%H%M%S')
 
@@ -105,9 +117,6 @@ def download_youtube_video(youtube_link, start_time, end_time, username):
     # 제목 포맷팅 (50자 제한 및 특수문자 제거)
     formatted_title = format_filename(video_title)
 
-    # 파일명 생성 (유튜브 제목 + 현재 시간)
-    output_filename = f"{formatted_title}_{current_time}.mp4"
-
     # username 폴더 경로 생성
     video_temp_folder = os.path.join(config.VIDEO_DATA_FOLDER, username, "temp")
 
@@ -115,79 +124,94 @@ def download_youtube_video(youtube_link, start_time, end_time, username):
     if not os.path.exists(video_temp_folder):
         os.makedirs(video_temp_folder, exist_ok=True)
 
-    # 파일이 저장될 전체 경로
-    output_path = os.path.join(video_temp_folder, output_filename)
+    # 원본 다운로드 경로 생성
+    raw_output_filename = f"{formatted_title}_{current_time}_raw.mp4"
+    raw_output_path = os.path.join(video_temp_folder, raw_output_filename)
 
+    # 최종 자른 파일 경로 생성
+    final_output_filename = f"{formatted_title}_{current_time}.mp4"
+    final_output_path = os.path.join(video_temp_folder, final_output_filename)
+
+    # yt-dlp 옵션 설정 (비디오와 오디오 스트림 다운로드)
     ydl_opts = {
-        'outtmpl': output_path,
+        'outtmpl': raw_output_path,
         'format': 'bestvideo+bestaudio/best',
-        'postprocessor_args': ['-ss', start_time, '-to', end_time],
         'merge_output_format': 'mp4',
         'quiet': True,
         'no_warnings': True,
-        'progress_hooks': [lambda d: None]  # 진행률 로그 비활성화
+        'verbose': False,
+        "logger": loggerOutputs,
     }
 
+    # 유튜브 비디오 다운로드
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([youtube_link])
 
-    return output_path
 
-def download_youtube_video_segment(youtube_link, start_time, end_time, username):
-    current_time = datetime.now().strftime('%Y%m%d_%H%M%S')
-    
-    # Fetch video information without downloading
-    with yt_dlp.YoutubeDL() as ydl:
-        info_dict = ydl.extract_info(youtube_link, download=False)
-        video_title = info_dict.get('title', 'Unknown Title')
-    
-    # Format the video title and paths
-    formatted_title = "".join(c if c.isalnum() else "_" for c in video_title)[:50]
-    temp_filename = f"{formatted_title}_{current_time}_temp.mp4"
-    output_filename = f"{formatted_title}_{current_time}_segment.mp4"
-    video_temp_folder = os.path.join("/path/to/video/storage", username, "temp")
-
-    # Create temp folder if it doesn't exist
-    os.makedirs(video_temp_folder, exist_ok=True)
-    
-    temp_path = os.path.join(video_temp_folder, temp_filename)
-    output_path = os.path.join(video_temp_folder, output_filename)
-
-    # yt-dlp options for downloading
-    ydl_opts = {
-        'outtmpl': temp_path,
-        'format': 'bestvideo+bestaudio/best',
-        'merge_output_format': 'mp4'
-    }
-
-    # Download the video fully
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.download([youtube_link])
-
-    # Use ffmpeg to extract the desired segment
     ffmpeg_command = [
-        'ffmpeg', '-i', temp_path, '-ss', start_time, '-to', end_time,
-        '-c', 'copy', output_path
+        'ffmpeg',
+        '-ss', start_time,  # 입력 파일에 직접 -ss 적용
+        '-to', end_time,    # 입력 파일에 직접 -to 적용
+        '-i', raw_output_path,
+        '-c', 'copy',
+        final_output_path,
+        '-loglevel', 'error'  # 에러만 출력하여 콘솔 로그 간소화
     ]
 
-    # Run ffmpeg command
+    # FFmpeg 명령 실행
     subprocess.run(ffmpeg_command, check=True)
 
-    # Clean up the temp full video
-    os.remove(temp_path)
+    # 원본 다운로드 파일 삭제
+    os.remove(raw_output_path)
 
-    return output_path
+    # 문자열 시간을 초 단위로 변환하는 함수
+    def time_str_to_seconds(time_str):
+        h, m, s = map(float, time_str.split(":"))
+        return int(timedelta(hours=h, minutes=m, seconds=s).total_seconds())
 
+    # 예상 지속 시간 (초)
+    expected_duration = time_str_to_seconds(end_time) - time_str_to_seconds(start_time)
 
+    # 비디오 스트림의 길이 확인
+    ffprobe_video_command = [
+        'ffprobe',
+        '-v', 'error',
+        '-select_streams', 'v:0',  # 첫 번째 비디오 스트림 선택
+        '-show_entries', 'stream=duration',
+        '-of', 'default=noprint_wrappers=1:nokey=1',
+        final_output_path
+    ]
+    video_duration = float(subprocess.check_output(ffprobe_video_command).strip())
+
+    # 오디오 스트림의 길이 확인
+    ffprobe_audio_command = [
+        'ffprobe',
+        '-v', 'error',
+        '-select_streams', 'a:0',  # 첫 번째 오디오 스트림 선택
+        '-show_entries', 'stream=duration',
+        '-of', 'default=noprint_wrappers=1:nokey=1',
+        final_output_path
+    ]
+    audio_duration = float(subprocess.check_output(ffprobe_audio_command).strip())
+
+    # 비디오와 오디오 스트림 길이 비교
+    success = True
+    if abs(video_duration - expected_duration) > 0.1:  # 비디오 스트림 오차 허용 (0.1초)
+        print(f"경고: 비디오 길이({video_duration}초)가 예상 길이({expected_duration}초)와 일치하지 않습니다.")
+        success = False
+
+    if abs(audio_duration - expected_duration) > 0.1:  # 오디오 스트림 오차 허용 (0.1초)
+        print(f"경고: 오디오 길이({audio_duration}초)가 예상 길이({expected_duration}초)와 일치하지 않습니다.")
+        success = False
+
+    return final_output_path if success else None
 
 def process_video_for_predictions(video_file_path, model, val_transform, chunk_size=16, target_fps=6, postprocess=True):
     cap = cv2.VideoCapture(video_file_path)
     original_fps = cap.get(cv2.CAP_PROP_FPS)  # 원본 fps 가져오기
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))  # 비디오의 총 프레임 수 가져오기
 
-    print(f"video_file_path: {video_file_path}")
-    print(f"Total number of frames: {total_frames}")
-    print(f"original_fps: {original_fps}")
+    print(f"video_file_path: {video_file_path}, Total number of frames: {total_frames}, original_fps: {original_fps}")
 
     frame_index = 0
     predictions = []
@@ -196,8 +220,7 @@ def process_video_for_predictions(video_file_path, model, val_transform, chunk_s
         # target_fps로 청크를 처리하고 예측 결과 받기
         prediction, frame_index = process_chunk_for_prediction(cap, model, val_transform, chunk_size, frame_index, target_fps)
         cur_time = frame_index/target_fps
-        print(f"frame_index: {frame_index}, time:{cur_time}, prediction: {prediction}")
-
+        
         if prediction is None:
             break  # 프레임이 충분하지 않으면 종료
 
@@ -211,7 +234,6 @@ def process_video_for_predictions(video_file_path, model, val_transform, chunk_s
         predictions = postprocess_predictions(predictions, config.POST_CONS_CHUNK_SIZE)
 
     print(f"predictions:{predictions}")
-    print(f"original_fps:{original_fps}")
 
     # 예측 결과를 반환
     return predictions, original_fps
@@ -243,7 +265,6 @@ def postprocess_predictions(predictions, n):
             if last_n_chunks[:-1] == ['playing'] * (n - 1) and last_n_chunks[-1] == 'not-playing':
                 # 현재 청크가 not-playing이고 playing_prob가 낮을 경우 후처리
                 if play_streak[-1][1] <= config.PLAY_THRESHOLD:
-                    print(f"Postprocessing: Adjusting prediction at time {time_stamp}. Changing 'not-playing' to 'playing'.")
                     # 현재 청크를 playing으로 수정
                     processed_predictions.append((time_stamp, 'playing', 0.9, 0.1))
                     # play_streak에서도 수정
@@ -264,18 +285,20 @@ def compress_video_with_ffmpeg(input_path, output_path):
         'ffmpeg',
         '-i', input_path,           # 입력 파일 경로
         '-vcodec', 'libx264',       # H.264 코덱 사용
-        '-crf', '23',               # 품질 설정 (값을 높이면 더 압축, 낮추면 더 좋은 품질)
-        '-preset', 'medium',        # ultrafast, superfast, veryfast, faster, fast, medium (기본값), slow, slower, veryslow
+        '-crf', '23',               # 품질 설정 (23이 기본, 낮을수록 품질이 높아지고 용량이 커짐)
+        '-preset', 'medium',        # 속도와 압축의 균형 (faster, medium, slower 등 선택 가능)
         '-y',                       # 기존 파일 덮어쓰기
         output_path                 # 출력 파일 경로
     ]
 
+
     try:
-        # ffmpeg 명령 실행
-        subprocess.run(command, check=True)
+        # ffmpeg 명령 실행 및 stderr 캡처
+        result = subprocess.run(command, stderr=subprocess.PIPE, stdout=subprocess.PIPE, check=True)
         print(f"Video successfully compressed and saved to {output_path}")
     except subprocess.CalledProcessError as e:
-        print(f"Error occurred while compressing video: {e}")
+        print("Error occurred while compressing video:", e.stderr.decode())
+        raise
 
 def find_playing_segments(predictions, chunk_duration):
     playing_segments = []
@@ -313,19 +336,31 @@ def find_longest_segments(segments, n):
     return sorted_segments[:n]
 
 def create_highlight_video(video_file_path, longest_segment, output_path):
+    # 비디오 파일 읽기 및 기본 설정
     cap = cv2.VideoCapture(video_file_path)
     fps = cap.get(cv2.CAP_PROP_FPS)
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # 원본 프레임 형식 유지
 
-    # 비디오 라이터 초기화
-    out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+    # 임시 비디오 및 오디오 경로 생성
+    temp_video_path = output_path.replace(".mp4", "_temp.mp4")
+    temp_audio_path = output_path.replace(".mp4", "_temp_audio.wav")
+    temp_full_audio_path = output_path.replace(".mp4", "_temp_full_audio.wav")
 
+    # 전체 오디오 추출
+    ffmpeg.input(video_file_path).output(temp_full_audio_path, format='wav').run(quiet=True)
+    original_audio = AudioSegment.from_file(temp_full_audio_path)
+
+    # 비디오 라이터 초기화
+    out = cv2.VideoWriter(temp_video_path, fourcc, fps, (width, height))
+
+    # 프레임 구간 계산
     start_time, end_time = longest_segment
     start_frame = int(start_time * fps)
     end_frame = int(end_time * fps)
 
+    # 비디오 프레임 추출
     cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
 
     for frame_idx in range(start_frame, end_frame):
@@ -337,23 +372,48 @@ def create_highlight_video(video_file_path, longest_segment, output_path):
     out.release()
     cap.release()
 
-    print(f"Created highlight video: {output_path}")
+    # 오디오 구간 추출 및 저장
+    start_ms = start_time * 1000  # ms 단위
+    end_ms = end_time * 1000
+    audio_segment = original_audio[start_ms:end_ms]
+    audio_segment.export(temp_audio_path, format="wav")
+
+    # 비디오와 오디오 병합
+    video_stream = ffmpeg.input(temp_video_path)
+    audio_stream = ffmpeg.input(temp_audio_path)
+    ffmpeg.concat(video_stream, audio_stream, v=1, a=1).output(output_path).run()
+
+    # 임시 파일 삭제
+    os.remove(temp_video_path)
+    os.remove(temp_audio_path)
+    os.remove(temp_full_audio_path)
+
+    print(f"Created highlight video with audio: {output_path}")
 
 def create_segment_videos(video_file_path, segments, base_dir):
+    # 비디오 파일 읽기 및 기본 설정
     cap = cv2.VideoCapture(video_file_path)
     fps = cap.get(cv2.CAP_PROP_FPS)
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # 원본 프레임 형식 유지
 
+
+    # 전체 오디오 로드
+    temp_audio_file = os.path.join(base_dir, "temp_full_audio.wav")
+    ffmpeg.input(video_file_path).output(temp_audio_file, format='wav').run(quiet=True)
+    original_audio = AudioSegment.from_file(temp_audio_file)
+
     segment_videos = []
 
     for idx, (start_time, end_time) in enumerate(segments):
-        # 비디오 파일명 생성
-        output_file = os.path.join(base_dir, f'temp_segment{idx + 1}.mp4')
+        # 비디오 및 오디오 파일 경로 생성
+        output_file = os.path.join(base_dir, f'segment_temp{idx + 1}.mp4')
+        temp_video_path = os.path.join(base_dir, f'segment_video_temp{idx + 1}.mp4')
+        temp_audio_path = os.path.join(base_dir, f'segment_audio_temp{idx + 1}.wav')
 
         # 비디오 라이터 초기화
-        out = cv2.VideoWriter(output_file, fourcc, fps, (width, height))
+        out = cv2.VideoWriter(temp_video_path, fourcc, fps, (width, height))
 
         # 비디오 프레임 계산
         start_frame = int(start_time * fps)
@@ -368,61 +428,111 @@ def create_segment_videos(video_file_path, segments, base_dir):
             out.write(frame)
 
         out.release()
-        segment_videos.append(output_file)
-        print(f"Created video segment: {output_file}")
+        
+        # 오디오 구간 추출 및 저장
+        start_ms = start_time * 1000  # ms 단위
+        end_ms = end_time * 1000
+        audio_segment = original_audio[start_ms:end_ms]
+        audio_segment.export(temp_audio_path, format="wav")
 
+        # 비디오와 오디오 병합
+        video_stream = ffmpeg.input(temp_video_path)
+        audio_stream = ffmpeg.input(temp_audio_path)
+        ffmpeg.concat(video_stream, audio_stream, v=1, a=1).output(output_file).run()
+
+        segment_videos.append(output_file)
+
+        # 임시 파일 삭제
+        os.remove(temp_video_path)
+        os.remove(temp_audio_path)
+
+    # 전체 임시 오디오 파일 삭제
+    os.remove(temp_audio_file)
     cap.release()
 
     return segment_videos
 
-
-
-def extract_video_using_prediction(video_path, temp_video_path, output_video_path, predictions, original_fps, extract_type):
+def extract_video_using_prediction(video_path, temp_video_path, output_video_path, predictions, original_fps, extract_type, play_threshold=config.PLAY_THRESHOLD):
+    # 비디오 설정 초기화
     cap = cv2.VideoCapture(video_path)
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-
     cvwriter = cv2.VideoWriter(temp_video_path, fourcc, original_fps, (width, height))
-    if not cvwriter.isOpened():
-        raise IOError(f"Error: Failed to open video writer for {temp_video_path}. Ensure that codec is supported.")
+
+    # video_path 파일명에서 확장자를 .wav로 변경하고, 끝에 _temp_audio 추가
+    video_dir = os.path.dirname(video_path)
+    base_name = os.path.splitext(os.path.basename(video_path))[0]
+    temp_audio_file = os.path.join(video_dir, f"{base_name}_temp_audio.wav")
+
+    # 기존에 임시 파일이 있으면 삭제
+    if os.path.exists(temp_audio_file):
+        os.remove(temp_audio_file)
+
+    # 임시 오디오 파일 추출 및 로드
+    ffmpeg.input(video_path).output(temp_audio_file, format='wav').run(quiet=True)
+    original_audio = AudioSegment.from_file(temp_audio_file)
+
+    # 병합된 오디오 클립을 저장할 객체 초기화
+    merged_audio = AudioSegment.empty()
 
     previous_end_frame = 0
     for idx, (time_index, pred_label, playing_prob, not_playing_prob) in enumerate(predictions):
         start_frame = previous_end_frame
         end_frame = int(time_index * original_fps)
-        print(f"start_frame:{start_frame}, end_frame:{end_frame}, time_index:{time_index}, playing_prob:{playing_prob}")
-        
         cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
 
-        # 프레임 읽고 처리
-        frame_start_time = time.time()
+        # 비디오 프레임 처리와 오디오 병합 조건 확인
+        should_write_audio = False
+
         for frame_index in range(start_frame, end_frame):
             ret, frame = cap.read()
             if not ret:
                 break
-            
+
+            # 조건에 맞는 프레임과 오디오 병합 결정
             if extract_type == "full":
                 frame_with_text = add_prediction_text_to_frame(frame, playing_prob, not_playing_prob, start_frame / original_fps, end_frame / original_fps)
                 cvwriter.write(frame_with_text)
+                should_write_audio = True
+            elif extract_type == "playing" and playing_prob > play_threshold:
+                cvwriter.write(frame)
+                should_write_audio = True
 
-            if (extract_type == "playing") and (playing_prob > config.PLAY_THRESHOLD) :
-                cvwriter.write(frame)  # 비디오2에 해당 프레임 저장
-                
+        # 오디오 구간 추출 및 병합
+        if should_write_audio:
+            start_ms = (start_frame / original_fps) * 1000
+            end_ms = (end_frame / original_fps) * 1000
+            audio_segment = original_audio[start_ms:end_ms]
+            merged_audio += audio_segment
+
         previous_end_frame = end_frame
 
     cap.release()
     cvwriter.release()
 
-    print(f"Full video with text saved at: {temp_video_path}")
+    # 병합된 오디오를 임시 파일로 저장 (임시 파일 이름 동일 방식으로 생성)
+    temp_merged_audio_path = os.path.join(video_dir, f"{base_name}_temp_merged_audio.wav")
+    if os.path.exists(temp_merged_audio_path):
+        os.remove(temp_merged_audio_path)
+    merged_audio.export(temp_merged_audio_path, format="wav")
 
-    compress_video_with_ffmpeg(temp_video_path, output_video_path)  # 전체 비디오 압축
-    os.remove(temp_video_path)
+    # 최종 비디오와 오디오 병합
+    try:
+        video_stream = ffmpeg.input(temp_video_path)
+        audio_stream = ffmpeg.input(temp_merged_audio_path)
+        ffmpeg.output(video_stream, audio_stream, output_video_path, vcodec='copy', acodec='aac').run(capture_stdout=True, capture_stderr=True)
+    except ffmpeg.Error as e:
+        print("ffmpeg error:", e.stderr.decode())
+        raise e
+    finally:
+        # 임시 파일 삭제
+        os.remove(temp_video_path)
+        os.remove(temp_audio_file)
+        os.remove(temp_merged_audio_path)
 
-    print(f"Compressed and saved at: {temp_video_path}, {output_video_path}")
-    
     return output_video_path
+
 
 def extract_videos_using_prediction(predictions, video_file_path, highlight_temp_video_path, highlight_video_path, folder_path, segment_zip_path, highlight_zip_path):
     chunk_duration = predictions[0][0]  # 각 청크의 지속 시간
@@ -441,7 +551,8 @@ def extract_videos_using_prediction(predictions, video_file_path, highlight_temp
     segment_comp_videos = []  # 압축된 비디오 파일들을 저장할 리스트
     
     for segment_video in segment_videos:
-        segment_comp_video = segment_video.replace("temp_", "")
+        segment_comp_video = segment_video.replace("_temp", "")
+        print(f"segment_video:{segment_video}, segment_comp_video:{segment_comp_video}")
         compress_video_with_ffmpeg(segment_video, segment_comp_video) 
         segment_comp_videos.append(segment_comp_video)
         
@@ -451,7 +562,7 @@ def extract_videos_using_prediction(predictions, video_file_path, highlight_temp
             zipf.write(video, os.path.basename(video))  # ZIP 파일에 파일을 추가
     print(f"ZIP file created at: {segment_zip_path}")
 
-    for file in segment_comp_videos:
+    for file in segment_videos:
         os.remove(file)
 
     # 4-1. 가장 긴 세그먼트에 해당하는 비디오 생성
@@ -484,9 +595,11 @@ def extract_videos_using_prediction(predictions, video_file_path, highlight_temp
 
 # 한 청크를 처리하고 예측 결과를 반환하는 함수 (target_fps로 예측)
 def process_chunk_for_prediction(cap, model, val_transform, chunk_size, frame_index, target_fps, resize_dim=(1280, 720)):
+
     frames = []
     for _ in range(chunk_size):
-        cap.set(cv2.CAP_PROP_POS_MSEC, frame_index * (1000 / target_fps))
+        set_time = frame_index * (1000 / target_fps)
+        cap.set(cv2.CAP_PROP_POS_MSEC, set_time)
         ret, frame = cap.read()
         if not ret:
             break
@@ -509,6 +622,9 @@ def process_chunk_for_prediction(cap, model, val_transform, chunk_size, frame_in
     playing_prob = probs[1]  # playing 클래스 확률
     not_playing_prob = probs[0]  # not-playing 클래스 확률
 
+    set_time_end = frame_index * (1000 / target_fps)
+    set_time_start = (frame_index-chunk_size) * (1000 / target_fps)
+        
     return (predicted_class, playing_prob, not_playing_prob), frame_index
 
 
@@ -655,8 +771,12 @@ def process_video(self, video_path, process_options, username):
         highlight_zip_path = None
         segment_zip_path = None
         
-    print(f"process_video finished")
-    print(full_video_path, playing_video_path, highlight_zip_path, segment_zip_path)
+    print(f"****** process_video finished ******")
+    print(f"Full Video Path: {full_video_path}, "
+        f"Playing Video Path: {playing_video_path}, "
+        f"Highlight Zip Path: {highlight_zip_path}, "
+        f"Segment Zip Path: {segment_zip_path}")
+    print(f"************************************")
 
     return full_video_path, playing_video_path, highlight_zip_path, segment_zip_path
     
