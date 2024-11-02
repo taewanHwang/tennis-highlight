@@ -21,7 +21,7 @@ with gr.Blocks(title="Tennis highlight editor") as main_view:
         download_full_button = gr.Button("⭐ Download Full Video ⭐", interactive=False)
         download_playing_button = gr.Button("⭐ Download Playing Video ⭐", interactive=False)
         download_highlights_button = gr.Button(f"⭐ Download {config.HIGHTLIGHTS_NUM} Highlights Video ⭐", interactive=False)
-        download_segments_button = gr.Button("⭐ Download Segments Video ⭐", interactive=False)
+        download_segments_button = gr.Button("⭐ Download Segments Video ⭐", interactive=False, visible=False)
         download_output = gr.File(label="⭐ Download Result Video ⭐", interactive=False)
 
         back_button.click(show_task_list, inputs=[], outputs=[task_list_container, task_detail_container, new_task_container])
