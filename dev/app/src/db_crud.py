@@ -119,26 +119,29 @@ def get_user_tasks(auth_state):
             return "사용자를 찾을 수 없습니다."
 
         # 해당 사용자의 ID로 VideoTask 필터링
-        tasks = db.query(VideoTask).filter(VideoTask.user_id == user.id).all()
         tasks = db.query(VideoTask).options(joinedload(VideoTask.task_types)).filter(VideoTask.user_id == user.id).all()
 
-    if not tasks:
-        return "작업 목록이 없습니다."
-    
     # 작업 목록을 리스트로 변환하여 반환
     task_list = []
-    for task in tasks:
-        # 해당 작업에 연결된 VideoTaskType 가져오기
-        task_types = ", ".join([task_type.result_type for task_type in task.task_types])
-        task_list.append([
-            task.id, task.status, task.video_url, 
-            format_datetime_short(convert_to_kst(task.created_at)), 
-            format_datetime_short(convert_to_kst(task.updated_at)), 
-            task_types
+    if tasks:
+        for task in tasks:
+            # 해당 작업에 연결된 VideoTaskType 가져오기
+            task_types = ", ".join([task_type.result_type for task_type in task.task_types])
+            task_list.append([
+                task.id, task.status, task.video_url, 
+                format_datetime_short(convert_to_kst(task.created_at)), 
+                format_datetime_short(convert_to_kst(task.updated_at)), 
+                task_types
             ])
     
-    # DataFrame 생성 후 created_at 기준으로 내림차순 정렬
+    # DataFrame 생성 및 빈 경우의 처리
     df = pd.DataFrame(task_list, columns=["Task ID", "Status", "Video URL", "Created", "Updated", "Task Types"])
+    
+    if df.empty:
+        # 데이터가 비어 있을 경우 빈 DataFrame 유지
+        return df
+
+    # created_at 기준으로 내림차순 정렬
     df = df.sort_values(by=["Created", "Task ID"], ascending=[False, True])
         
     return df
