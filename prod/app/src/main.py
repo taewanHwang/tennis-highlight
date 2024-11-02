@@ -113,7 +113,7 @@ async def download_video(task_id: int, video_type: str = "full"):
 
     Parameters:
     - task_id: 작업의 task_id
-    - video_type: "full", "playing", "highlight", "highlights", "segments" 등
+    - video_type: "full", "playing", "highlights", "segments" 등
     """
     print(f"task_id: {task_id}, video_type: {video_type}", flush=True)
 
@@ -134,8 +134,8 @@ async def download_video(task_id: int, video_type: str = "full"):
     
     print(f"result_file: {result_file}", flush=True)
 
-    # 파일 이름 설정: 'segments'와 'highlights'는 ZIP, 그 외는 MP4
-    if video_type in ['segments', 'highlights']:
+    # 파일 이름 설정: 'segments'는 ZIP, 그 외는 MP4
+    if video_type in ['segments']:
         filename = f"download-{video_type}.zip"
     else:
         filename = f"download-{video_type}.mp4"
