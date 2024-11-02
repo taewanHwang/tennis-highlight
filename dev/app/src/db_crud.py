@@ -139,7 +139,7 @@ def get_user_tasks(auth_state):
     
     # DataFrame 생성 후 created_at 기준으로 내림차순 정렬
     df = pd.DataFrame(task_list, columns=["Task ID", "Status", "Video URL", "Created", "Updated", "Task Types"])
-    df = df.sort_values(by="Created", ascending=False)
+    df = df.sort_values(by=["Created", "Task ID"], ascending=[False, True])
         
     return df
 

@@ -104,7 +104,7 @@ def download_video(task_id, video_type):
             file_path = os.path.join(os.getcwd(), filename)
             print(f"file_path:{file_path}",flush=True)
             with open(file_path, 'wb') as f:
-                for chunk in response_download.iter_content(chunk_size=1024):
+                for chunk in response_download.iter_content(chunk_size=65536):
                     if chunk:
                         f.write(chunk)
             

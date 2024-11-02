@@ -196,12 +196,13 @@ def download_youtube_video(youtube_link, start_time, end_time, username):
 
     # 비디오와 오디오 스트림 길이 비교
     success = True
-    if abs(video_duration - expected_duration) > 0.1:  # 비디오 스트림 오차 허용 (0.1초)
-        print(f"경고: 비디오 길이({video_duration}초)가 예상 길이({expected_duration}초)와 일치하지 않습니다.")
+    error_margin = abs(expected_duration) * 0.002 # 전체 길이의 0.2%
+    if abs(video_duration - expected_duration) > error_margin: 
+        print(f"경고: 비디오 길이({video_duration}초)가 예상 길이({expected_duration}초)와 일치하지 않습니다. 에러 허용은 {error_margin}초까지 가능합니다.")
         success = False
 
-    if abs(audio_duration - expected_duration) > 0.1:  # 오디오 스트림 오차 허용 (0.1초)
-        print(f"경고: 오디오 길이({audio_duration}초)가 예상 길이({expected_duration}초)와 일치하지 않습니다.")
+    if abs(audio_duration - expected_duration) > error_margin: 
+        print(f"경고: 오디오 길이({audio_duration}초)가 예상 길이({expected_duration}초)와 일치하지 않습니다. 에러 허용은 {error_margin}초까지 가능합니다.")
         success = False
 
     return final_output_path if success else None
@@ -241,12 +242,14 @@ def process_video_for_predictions(video_file_path, model, val_transform, chunk_s
 def postprocess_predictions(predictions, n):
     """
     연속 n개의 청크가 playing이고, 현재 청크가 not-playing인 경우 후처리하여 playing으로 변경.
+    또한, not-playing -> playing -> not-playing 형태의 1순간 playing 구간을 not-playing으로 변환.
     후처리가 적용된 이후, 새로운 playing 구간이 발생하면 후처리 상태를 초기화함.
     """
     play_streak = []  # 최근 n개의 청크 저장용
     processed_predictions = []
     postprocess_applied = False  # 후처리가 한 번 적용되었는지 확인하는 플래그
 
+    # 첫 번째 후처리: 연속 n개의 playing 후에 not-playing을 playing으로 변경
     for prediction in predictions:
         time_stamp, predicted_class, playing_prob, not_playing_prob = prediction
 
@@ -278,7 +281,26 @@ def postprocess_predictions(predictions, n):
         else:
             processed_predictions.append(prediction)
 
-    return processed_predictions
+    # 두 번째 후처리: not-playing -> playing -> not-playing 구간을 not-playing으로 변경
+    final_predictions = []
+    i = 0
+    while i < len(processed_predictions):
+        # 현재 청크가 'playing'이고 이전과 다음 청크가 모두 'not-playing'이면 후처리
+        if (
+            i > 0 and i < len(processed_predictions) - 1
+            and processed_predictions[i - 1][1] == 'not-playing'
+            and processed_predictions[i][1] == 'playing'
+            and processed_predictions[i + 1][1] == 'not-playing'
+        ):
+            # 현재 청크를 'not-playing'으로 변환
+            time_stamp, _, playing_prob, not_playing_prob = processed_predictions[i]
+            final_predictions.append((time_stamp, 'not-playing', 0.1, 0.9))
+            i += 1  # 중간 청크 건너뜀
+        else:
+            final_predictions.append(processed_predictions[i])
+            i += 1
+
+    return final_predictions
 
 def compress_video_with_ffmpeg(input_path, output_path):
     command = [

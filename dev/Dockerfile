@@ -40,7 +40,7 @@ COPY ./run.sh /base/
 COPY ./model /base/model
 
 # 포트 설정
-EXPOSE 41090 41091 41092 41093
+EXPOSE 41090
 
 # 쉘 스크립트를 실행하도록 설정 (Celery와 Uvicorn을 백그라운드에서 실행)
 ENTRYPOINT ["bash", "run.sh"]
