@@ -32,7 +32,7 @@ def process_youtube_video(self, input_data):
         db_crud.update_task_status_to_downloaded(video_task.id)
             
         # 3. 비디오 영상 처리
-        full_video_path, playing_video_path, highlight_zip_path, segment_zip_path = process_video(self, video_path, process_options, username)
+        full_video_path, playing_video_path, highlight_video_path, segment_zip_path = process_video(self, video_path, process_options, username)
         
         if db_crud.is_task_cancelled(video_task.id):
             return {"message": "Task was stopped by user"}
@@ -44,8 +44,8 @@ def process_youtube_video(self, input_data):
         if playing_video_path:  # playing_video_path가 None이 아닌 경우
             db_crud.create_video_result(video_task.id, playing_video_path, "playing")
 
-        if highlight_zip_path:  # highlight_zip_path가 None이 아닌 경우
-            db_crud.create_video_result(video_task.id, highlight_zip_path, "highlights")
+        if highlight_video_path:  # highlight_video_path가 None이 아닌 경우
+            db_crud.create_video_result(video_task.id, highlight_video_path, "highlights")
 
         if segment_zip_path:  # segment_zip_path가 None이 아닌 경우
             db_crud.create_video_result(video_task.id, segment_zip_path, "segments")
@@ -75,7 +75,7 @@ def process_uploaded_video(self, video_path, process_options, username):
         video_task = db_crud.create_video_task(username, req_id, video_path, process_options)
 
         # 2. 비디오 영상 처리
-        full_video_path, playing_video_path, highlight_zip_path, segment_zip_path = process_video(self, video_path, process_options, username)
+        full_video_path, playing_video_path, highlight_video_path, segment_zip_path = process_video(self, video_path, process_options, username)
         if db_crud.is_task_cancelled(video_task.id):
             return {"message": "Task was stopped by user"}
         
@@ -86,8 +86,8 @@ def process_uploaded_video(self, video_path, process_options, username):
         if playing_video_path:  # playing_video_path가 None이 아닌 경우
             db_crud.create_video_result(video_task.id, playing_video_path, "playing")
 
-        if highlight_zip_path:  # highlight_zip_path가 None이 아닌 경우
-            db_crud.create_video_result(video_task.id, highlight_zip_path, "highlights")
+        if highlight_video_path:  # highlight_video_path가 None이 아닌 경우
+            db_crud.create_video_result(video_task.id, highlight_video_path, "highlights")
 
         if segment_zip_path:  # segment_zip_path가 None이 아닌 경우
             db_crud.create_video_result(video_task.id, segment_zip_path, "segments")

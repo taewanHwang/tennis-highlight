@@ -335,7 +335,7 @@ def find_playing_segments(predictions, chunk_duration):
         else:
             if current_segment is not None:
                 # playing 세그먼트가 끝났으므로 종료 시간 기록
-                current_segment.append(chunk_end_time)  # 끝 시간을 기록 (청크 끝 시간)
+                current_segment.append(chunk_start_time)  # 끝 시간을 기록 (청크 시작 시간)
                 playing_segments.append(current_segment)
                 current_segment = None
 
@@ -345,6 +345,18 @@ def find_playing_segments(predictions, chunk_duration):
         playing_segments.append(current_segment)
 
     return playing_segments
+
+def find_highlight_segments(playing_segments, n):
+    # n이 리스트 원소 개수보다 크면 원소 개수로 제한
+    n = min(n, len(playing_segments))
+
+    # 각 구간의 길이를 계산하여 길이로 정렬하고 상위 n개 구간 선택
+    sorted_segments = sorted(playing_segments, key=lambda x: x[1] - x[0], reverse=True)[:n]
+
+    # 시작 시간을 기준으로 정렬
+    sorted_segments = sorted(sorted_segments, key=lambda x: x[0])
+
+    return sorted_segments
 
 
 def find_longest_segments(segments, n):
@@ -403,7 +415,12 @@ def create_highlight_video(video_file_path, longest_segment, output_path):
     # 비디오와 오디오 병합
     video_stream = ffmpeg.input(temp_video_path)
     audio_stream = ffmpeg.input(temp_audio_path)
-    ffmpeg.concat(video_stream, audio_stream, v=1, a=1).output(output_path).run()
+    ffmpeg.concat(video_stream, audio_stream, v=1, a=1).output(output_path,
+        vcodec='libx264',  # H.264 코덱 사용
+        crf='23',          # 품질 설정
+        preset='medium',   # 인코딩 속도와 압축률의 균형
+        acodec='aac'       # 오디오는 AAC 코덱
+    ).run()
 
     # 임시 파일 삭제
     os.remove(temp_video_path)
@@ -474,7 +491,7 @@ def create_segment_videos(video_file_path, segments, base_dir):
 
     return segment_videos
 
-def extract_video_using_prediction(video_path, temp_video_path, output_video_path, predictions, original_fps, extract_type, play_threshold=config.PLAY_THRESHOLD):
+def extract_video_using_prediction(video_path, temp_video_path, output_video_path, predictions, original_fps, extract_type):
     # 비디오 설정 초기화
     cap = cv2.VideoCapture(video_path)
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -517,7 +534,7 @@ def extract_video_using_prediction(video_path, temp_video_path, output_video_pat
                 frame_with_text = add_prediction_text_to_frame(frame, playing_prob, not_playing_prob, start_frame / original_fps, end_frame / original_fps)
                 cvwriter.write(frame_with_text)
                 should_write_audio = True
-            elif extract_type == "playing" and playing_prob > play_threshold:
+            elif (extract_type == "playing") and (pred_label == "playing"):
                 cvwriter.write(frame)
                 should_write_audio = True
 
@@ -527,7 +544,7 @@ def extract_video_using_prediction(video_path, temp_video_path, output_video_pat
             end_ms = (end_frame / original_fps) * 1000
             audio_segment = original_audio[start_ms:end_ms]
             merged_audio += audio_segment
-
+            
         previous_end_frame = end_frame
 
     cap.release()
@@ -543,7 +560,12 @@ def extract_video_using_prediction(video_path, temp_video_path, output_video_pat
     try:
         video_stream = ffmpeg.input(temp_video_path)
         audio_stream = ffmpeg.input(temp_merged_audio_path)
-        ffmpeg.output(video_stream, audio_stream, output_video_path, vcodec='copy', acodec='aac').run(capture_stdout=True, capture_stderr=True)
+        ffmpeg.output(video_stream, audio_stream, output_video_path,
+            vcodec='libx264',  # H.264 코덱 사용
+            crf='23',          # 품질 설정
+            preset='medium',   # 인코딩 속도와 압축률의 균형
+            acodec='aac'       # 오디오는 AAC 코덱
+        ).run(capture_stdout=True, capture_stderr=True)
     except ffmpeg.Error as e:
         print("ffmpeg error:", e.stderr.decode())
         raise e
@@ -556,63 +578,105 @@ def extract_video_using_prediction(video_path, temp_video_path, output_video_pat
     return output_video_path
 
 
-def extract_videos_using_prediction(predictions, video_file_path, highlight_temp_video_path, highlight_video_path, folder_path, segment_zip_path, highlight_zip_path):
+def extract_videos_using_prediction(predictions, video_file_path, highlight_temp_video_path, highlight_video_path, folder_path, segment_zip_path):
     chunk_duration = predictions[0][0]  # 각 청크의 지속 시간
 
     # 1. 연속적인 playing 구간 찾기
     playing_segments = find_playing_segments(predictions, chunk_duration)
     print(f"Playing Segments: {playing_segments}")
 
-    # 2. 가장 긴 세그먼트 찾기
-    highlight_segments = find_longest_segments(playing_segments, n=config.HIGHTLIGHTS_NUM)
-    print(f"Highlight Segment: {highlight_segments}")
+    # 2. 하이라이트 세그먼트 찾기 (test_highlight_segments 사용)
+    highlight_segments = find_highlight_segments(playing_segments, n=config.HIGHTLIGHTS_NUM)
+    print(f"Highlight Segments: {highlight_segments}")
 
-    # 3-1. 연속적인 세그먼트에 해당하는 비디오 생성
+    # 3-1. 연속적인 세그먼트에 해당하는 비디오 생성 (기존 로직)
     segment_videos = create_segment_videos(video_file_path, playing_segments, folder_path)
-    print(f"segment_videos: {segment_videos}")
-    segment_comp_videos = []  # 압축된 비디오 파일들을 저장할 리스트
+    segment_comp_videos = []
     
     for segment_video in segment_videos:
         segment_comp_video = segment_video.replace("_temp", "")
-        print(f"segment_video:{segment_video}, segment_comp_video:{segment_comp_video}")
         compress_video_with_ffmpeg(segment_video, segment_comp_video) 
         segment_comp_videos.append(segment_comp_video)
         
     # 3-2. 압축된 segment_comp_videos를 ZIP 파일로 압축
     with zipfile.ZipFile(segment_zip_path, 'w') as zipf:
         for video in segment_comp_videos:
-            zipf.write(video, os.path.basename(video))  # ZIP 파일에 파일을 추가
-    print(f"ZIP file created at: {segment_zip_path}")
+            zipf.write(video, os.path.basename(video))
+    print(f"Segment ZIP file created at: {segment_zip_path}")
 
     for file in segment_videos:
         os.remove(file)
-
-    # 4-1. 가장 긴 세그먼트에 해당하는 비디오 생성
-    highlight_video_paths = []
-    for i, segment in enumerate(highlight_segments):
-        _highlight_temp_video_path = highlight_temp_video_path.replace(".mp4", f"_{i+1}.mp4")
-        _highlight_video_path = highlight_video_path.replace(".mp4", f"_{i+1}.mp4")
-        
-        # 각 세그먼트를 하이라이트 비디오로 생성
-        create_highlight_video(video_file_path, segment, _highlight_temp_video_path)
-        compress_video_with_ffmpeg(_highlight_temp_video_path, _highlight_video_path)
-        
-        # 생성된 하이라이트 비디오를 리스트에 추가
-        highlight_video_paths.append(_highlight_video_path)
-        
-        # 원본 하이라이트 비디오 삭제 (압축된 비디오만 유지)
-        os.remove(_highlight_temp_video_path)
-
-    # 4-2. 압축된 highlight_comp_videos를 ZIP 파일로 압축
-    with zipfile.ZipFile(highlight_zip_path, 'w') as zipf:
-        for video in highlight_video_paths:
-            zipf.write(video, os.path.basename(video))  # ZIP 파일에 파일을 추가
-    print(f"Highlight ZIP file created at: {highlight_zip_path}")
-
-    for file in highlight_video_paths:
+    for file in segment_comp_videos:
         os.remove(file)
 
-    return highlight_zip_path, segment_zip_path
+    # 4. 하이라이트 비디오 생성 (새로운 로직)
+    # 비디오 설정 초기화
+    cap = cv2.VideoCapture(video_file_path)
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    cvwriter = cv2.VideoWriter(highlight_temp_video_path, fourcc, fps, (width, height))
+
+    # 오디오 추출 및 초기화
+    temp_audio_file = os.path.join(folder_path, "temp_full_audio.wav")
+    if os.path.exists(temp_audio_file):
+        os.remove(temp_audio_file)
+    ffmpeg.input(video_file_path).output(temp_audio_file, format='wav').run(quiet=True)
+    original_audio = AudioSegment.from_file(temp_audio_file)
+    merged_audio = AudioSegment.empty()
+
+    # 각 하이라이트 세그먼트를 순차적으로 처리
+    for segment in highlight_segments:
+        start_time, end_time = segment
+        start_frame = int(start_time * fps)
+        end_frame = int(end_time * fps)
+
+        # 비디오 프레임 추출
+        cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+        for _ in range(end_frame - start_frame):
+            ret, frame = cap.read()
+            if not ret:
+                break
+            cvwriter.write(frame)
+
+        # 오디오 구간 추출 및 병합
+        start_ms = start_time * 1000
+        end_ms = end_time * 1000
+        audio_segment = original_audio[start_ms:end_ms]
+        merged_audio += audio_segment
+
+    cap.release()
+    cvwriter.release()
+
+    # 병합된 오디오 저장
+    temp_merged_audio_path = os.path.join(folder_path, "temp_merged_audio.wav")
+    if os.path.exists(temp_merged_audio_path):
+        os.remove(temp_merged_audio_path)
+    merged_audio.export(temp_merged_audio_path, format="wav")
+
+    # 최종 비디오와 오디오 병합
+    try:
+        video_stream = ffmpeg.input(highlight_temp_video_path)
+        audio_stream = ffmpeg.input(temp_merged_audio_path)
+        ffmpeg.output(video_stream, audio_stream, highlight_video_path, 
+            vcodec='libx264',  # H.264 코덱 사용
+            crf='23',          # 품질 설정 (18-28이 일반적, 낮을수록 품질 높음)
+            preset='medium',   # 인코딩 속도와 압축률의 균형
+            acodec='aac'       # 오디오는 AAC 코덱 유지
+        ).run(capture_stdout=True, capture_stderr=True)
+    except ffmpeg.Error as e:
+        print("ffmpeg error:", e.stderr.decode())
+        raise e
+    finally:
+        # 임시 파일 삭제
+        os.remove(highlight_temp_video_path)
+        os.remove(temp_audio_file)
+        os.remove(temp_merged_audio_path)
+
+    print(f"Highlight video created at: {highlight_video_path}")
+
+    return highlight_video_path, segment_zip_path
 
 
 # 한 청크를 처리하고 예측 결과를 반환하는 함수 (target_fps로 예측)
@@ -783,22 +847,20 @@ def process_video(self, video_path, process_options, username):
     if make_highlight:
         highlight_temp_video_path = os.path.join(target_folder_path, f"temp_highlight.mp4")
         highlight_video_path = highlight_temp_video_path.replace("temp_highlight", "highlight")
-        segment_zip_path = os.path.join(target_folder_path, f"segment.zip")
-        highlight_zip_path = os.path.join(target_folder_path, f"highlight.zip")
-        
+        segment_zip_path = os.path.join(target_folder_path, f"segment.zip")        
         print(f"Let's make highlight video, path:{highlight_video_path}")
         print(f"Let's make segment videos, path:{segment_zip_path}")
-        highlight_zip_path, segment_zip_path = extract_videos_using_prediction(predictions, video_path, highlight_temp_video_path, highlight_video_path, target_folder_path, segment_zip_path, highlight_zip_path)
+        highlight_video_path, segment_zip_path = extract_videos_using_prediction(predictions, video_path, highlight_temp_video_path, highlight_video_path, target_folder_path, segment_zip_path)
     else:
-        highlight_zip_path = None
+        highlight_video_path = None
         segment_zip_path = None
         
     print(f"****** process_video finished ******")
     print(f"Full Video Path: {full_video_path}, "
         f"Playing Video Path: {playing_video_path}, "
-        f"Highlight Zip Path: {highlight_zip_path}, "
+        f"Highlight Video Path: {highlight_video_path}, "
         f"Segment Zip Path: {segment_zip_path}")
     print(f"************************************")
 
-    return full_video_path, playing_video_path, highlight_zip_path, segment_zip_path
+    return full_video_path, playing_video_path, highlight_video_path, segment_zip_path
     
